@@ -1,0 +1,108 @@
+#!/bin/bash
+
+# Функция отображения справки
+usage() {
+    cat <<EOF
+Использование: $0 <цель> [--ports ПОРТЫ] [--output ФАЙЛ]
+
+Примеры:
+  $0 192.168.1.1
+  $0 192.168.1.0/24 --ports 22,80,443 --output my_scan.txt
+  $0 example.com --ports 1-1000
+
+ПОРТЫ могут быть заданы в форматах: 80,443 или 1-1000. По умолчанию: 1-1000.
+EOF
+    exit 1
+}
+
+# Проверка наличия nmap
+if ! command -v nmap &> /dev/null; then
+    echo "Ошибка: nmap не установлен. Установите его и повторите попытку."
+    exit 1
+fi
+
+TARGET=""
+PORTS="1-1000"
+OUTPUT_FILE="scan_results_$(date +%Y%m%d_%H%M%S).txt"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ports)
+            PORTS="$2"
+            shift 2
+            ;;
+        --output)
+            OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            ;;
+        -*)
+            echo "Неизвестный параметр: $1"
+            usage
+            ;;
+        *)
+            if [[ -z "$TARGET" ]]; then
+                TARGET="$1"
+            else
+                echo "Указано несколько целей: $TARGET и $1"
+                usage
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$TARGET" ]]; then
+    echo "Ошибка: цель не указана."
+    usage
+fi
+
+# Определяем тип TCP-сканирования
+if [[ $EUID -eq 0 ]]; then
+    TCP_SCAN="-sS"
+    echo "Запуск с правами root → используется SYN-сканирование (-sS)"
+else
+    TCP_SCAN="-sT"
+    echo "Запуск без root → используется Connect-сканирование (-sT)"
+fi
+
+echo "Цель: $TARGET"
+echo "Порты: $PORTS"
+echo "Результаты будут сохранены в: $OUTPUT_FILE"
+echo "Начинаю сканирование... (UDP-сканирование может занять много времени)"
+
+# Временные файлы для вывода
+TEMP_PING=$(mktemp)
+TEMP_TCP=$(mktemp)
+TEMP_UDP=$(mktemp)
+
+echo ">>> 1. Ping-сканирование (ICMP, ARP, TCP/443)..."
+nmap -sn -T3 "$TARGET" > "$TEMP_PING" 2>&1
+
+echo ">>> 2. TCP-сканирование ($TCP_SCAN)..."
+nmap $TCP_SCAN -T3 -p "$PORTS" "$TARGET" > "$TEMP_TCP" 2>&1
+
+echo ">>> 3. UDP-сканирование (-sU)..."
+if [[ $EUID -ne 0 ]]; then
+    echo "Предупреждение: UDP-сканирование без прав root может быть медленным и менее точным." | tee -a "$TEMP_UDP"
+fi
+nmap -sU -T3 -p "$PORTS" "$TARGET" > "$TEMP_UDP" 2>&1
+
+# Формируем итоговый файл с разделителями (две пустые строки)
+{
+    echo "======= 1. PING SCAN (Тайминг T3) ======="
+    cat "$TEMP_PING"
+    echo -e "\n\n"
+    echo "======= 2. TCP SCAN (Тайминг T3, порты: $PORTS) ======="
+    cat "$TEMP_TCP"
+    echo -e "\n\n"
+    echo "======= 3. UDP SCAN (Тайминг T3, порты: $PORTS) ======="
+    cat "$TEMP_UDP"
+} > "$OUTPUT_FILE"
+
+# Удаляем временные файлы
+rm -f "$TEMP_PING" "$TEMP_TCP" "$TEMP_UDP"
+
+echo "Готово! Результаты сохранены в $OUTPUT_FILE"

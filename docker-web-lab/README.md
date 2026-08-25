@@ -1,1 +1,0 @@
-this is a simple docker container with nginx service and short html page for training and to demonstrate that I understand docker basics
