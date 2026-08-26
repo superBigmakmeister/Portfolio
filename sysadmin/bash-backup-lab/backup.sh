@@ -1,6 +1,5 @@
 #!/usr/bin/bash
 
-#"!/usr/bin/env bash" без кавычек
 
 #set -euo pipefail
 
